@@ -1,0 +1,64 @@
+# Build artifacts
+*.exe
+*.o
+*.obj
+*.out
+*.gch
+*.a
+*.so
+*.dll
+*.lib
+power_limit_test
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Dependency directories
+deps/
+build/
+bin/
+
+# Log files
+*.log
+*.csv
+*.dat
+
+# Backup files
+*.bak
+*.backup
+*.[Bb]ak
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# Precompiled headers
+*.gch
+*.pch
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Test coverage
+coverage/
+*.gcno
+*.gcda
+*.gcov 
