@@ -33,6 +33,9 @@ The system includes anti-windup protection, saturation limits, and fallback mech
 ## Building
 
 ```bash
+#cd into src
+cd src
+
 # Using GCC
 gcc -o power_limit_test main.c PID.c powerLimit.c -lm
 
@@ -73,12 +76,12 @@ pl->plTargetPower = 80;      // Target power limit (80kW)
    - Better for dynamic conditions
    - Includes anti-windup
 
-3. **Mode 3**: LUT Method
+3. **Mode 3**: LUT Method (UNFINISHED TBD)
    - Pre-calculated torque limits
    - Fast execution
    - Includes bilinear interpolation
 
-4. **Mode 4**: Combined Method
+4. **Mode 4**: Combined Method (UNFINISHED TBD)
    - Placeholder for future implementation
    - Could combine multiple strategies
 

@@ -53,14 +53,6 @@ PowerLimit* POWERLIMIT_new(){
     return me;
 }
 
-void POWERLIMIT_setLimpModeOverride(PowerLimit* me){
-    // Example placeholder
-    // if (some_button_press) {
-    //     me->plMode = 5;
-    //     me->plTargetPower = 20;
-    //     me->plInitializationThreshold = 0;
-    // }
-}
 
 /*****************************************************************************
  * Decides which sub-method to call
@@ -75,15 +67,15 @@ void PowerLimit_calculateCommand(PowerLimit *me, MotorController *mcm)
     {
     case 1:
         // TQ eqn
-        POWERLIMIT_calculateTorqueCommandTorqueEquation(me, mcm);
+        POWERLIMIT_calculateTorqueEquation(me, mcm);
         break;
     case 2:
         // Power-based PID
-        POWERLIMIT_calculateTorqueCommandPowerPID(me, mcm);
+        POWERLIMIT_calculatePowerEquation(me, mcm);
         break;
     case 3:
         // LUT approach
-        POWERLIMIT_calculateTorqueCommand(me, mcm);
+        POWERLIMIT_calculateLUTEquation(me, mcm);
         break;
     case 4:
         // “Final” approach? Combination or something custom
@@ -99,11 +91,98 @@ void PowerLimit_calculateCommand(PowerLimit *me, MotorController *mcm)
     }
 }
 
+
 /*****************************************************************************
- *  LUT-based approach:
+ * TQ Equation method
+ ****************************************************************************/
+void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm){
+    extern sbyte4 MCM_getPower(MotorController *mcm);
+    extern sbyte4 MCM_getMotorRPM(MotorController *mcm);
+    extern sbyte4 MCM_getCommandedTorque(MotorController *mcm);
+    extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
+    extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
+
+    PID_setSaturationPoint(me->pid, 8000);  // example bigger clamp
+
+    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
+        me->plStatus = TRUE;
+
+        sbyte4 motorRPM = MCM_getMotorRPM(mcm);
+        if(motorRPM == 0) motorRPM = 1; // avoid divide by zero
+
+        // TQ eqn => P(kW)*9549 / rpm
+        sbyte4 pidSetpoint = (sbyte4)((sbyte4)me->plTargetPower * 9549 / motorRPM);
+
+        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
+
+        PID_updateSetpoint(me->pid, pidSetpoint);
+        PID_computeOutput(me->pid, commandedTorque);
+
+        me->plTorqueCommand = (sbyte4)((commandedTorque + PID_getOutput(me->pid)) * 10);
+        MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
+        MCM_set_PL_updateStatus(mcm, me->plStatus);
+    }
+    else {
+        me->plStatus = FALSE;
+        MCM_update_PL_setTorqueCommand(mcm, -1);
+        MCM_set_PL_updateStatus(mcm, me->plStatus);
+    }
+}
+
+
+/*****************************************************************************
+ * Power-based PID approach
+ ****************************************************************************/
+void POWERLIMIT_calculatePowerEquation(PowerLimit *me, MotorController *mcm){
+    extern sbyte4 MCM_getPower(MotorController *mcm);
+    extern sbyte4 MCM_getCommandedTorque(MotorController *mcm);
+    extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
+    extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
+
+    PID_setSaturationPoint(me->pid, 80000);
+    me->plMode = 2; // not strictly needed, but clarifies
+
+    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
+        me->plStatus = TRUE;
+       
+        // Suppose MCM_getPower(mcm) is in W => convert to “PID scale”
+        sbyte4 pidTargetValue = (sbyte4)(me->plTargetPower * 1000); 
+        sbyte4 pidCurrentValue= (sbyte4)(MCM_getPower(mcm) / 10);
+
+        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
+
+        PID_updateSetpoint(me->pid, pidTargetValue);
+        PID_computeOutput(me->pid, pidCurrentValue);
+
+        // Simple ratio to adjust commandedTorque
+        // In practice, you may want a safer formula 
+        // to avoid divide-by-zero if pidCurrentValue=0
+        if(pidCurrentValue == 0) pidCurrentValue = 1;
+
+        sbyte4 newTorque = (sbyte4)(commandedTorque 
+                             + (commandedTorque * PID_getOutput(me->pid) 
+                                 / pidCurrentValue));
+
+        // saturate
+        if(newTorque > 231) newTorque = 231;
+
+        me->plTorqueCommand = newTorque * 10;
+        MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
+        MCM_set_PL_updateStatus(mcm, me->plStatus);
+    }
+    else {
+        me->plStatus = FALSE;
+        MCM_update_PL_setTorqueCommand(mcm, -1);
+        MCM_set_PL_updateStatus(mcm, me->plStatus);
+    }
+}
+
+
+/*****************************************************************************
+ *  LUT-based approach: (UNFINISHED DO NOT USE)
  *  - once power >= threshold, we do a LUT-based torque limit w/ simple PID
  ****************************************************************************/
-void POWERLIMIT_calculateTorqueCommand(PowerLimit *me, MotorController *mcm){
+void POWERLIMIT_calculateLUTEquation(PowerLimit *me, MotorController *mcm){
     // Suppose MCM_getPower(mcm) returns power in W => convert to kW
     extern sbyte4 MCM_getPower(MotorController *mcm);
     extern sbyte4 MCM_getMotorRPM(MotorController *mcm);
@@ -155,7 +234,7 @@ void POWERLIMIT_calculateTorqueCommand(PowerLimit *me, MotorController *mcm){
 /*****************************************************************************
  * Retrieve torque from LUT + interpolation
  ****************************************************************************/
-sbyte4 POWERLIMIT_retrieveTorqueFromLUT(PowerLimit* me, sbyte4 voltage, sbyte4 rpm)
+sbyte4 POWERLIMIT_retrieveTorqueFromLUT(PowerLimit* me, ubyte4 voltage, ubyte4 rpm)
 {
     // LUT Lower Bounds
     ubyte4 VOLTAGE_MIN  = 280;
@@ -218,89 +297,7 @@ sbyte4 POWERLIMIT_retrieveTorqueFromLUT(PowerLimit* me, sbyte4 voltage, sbyte4 r
                     / stepDivider);
 }
 
-/*****************************************************************************
- * TQ Equation method
- ****************************************************************************/
-void POWERLIMIT_calculateTorqueCommandTorqueEquation(PowerLimit *me, MotorController *mcm){
-    extern sbyte4 MCM_getPower(MotorController *mcm);
-    extern sbyte4 MCM_getMotorRPM(MotorController *mcm);
-    extern sbyte4 MCM_getCommandedTorque(MotorController *mcm);
-    extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
-    extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
 
-    PID_setSaturationPoint(me->pid, 8000);  // example bigger clamp
-
-    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
-        me->plStatus = TRUE;
-
-        sbyte4 motorRPM = MCM_getMotorRPM(mcm);
-        if(motorRPM == 0) motorRPM = 1; // avoid divide by zero
-
-        // TQ eqn => P(kW)*9549 / rpm
-        sbyte4 pidSetpoint = (sbyte4)((sbyte4)me->plTargetPower * 9549 / motorRPM);
-
-        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
-
-        PID_updateSetpoint(me->pid, pidSetpoint);
-        PID_computeOutput(me->pid, commandedTorque);
-
-        me->plTorqueCommand = (sbyte4)((commandedTorque + PID_getOutput(me->pid)) * 10);
-        MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
-        MCM_set_PL_updateStatus(mcm, me->plStatus);
-    }
-    else {
-        me->plStatus = FALSE;
-        MCM_update_PL_setTorqueCommand(mcm, -1);
-        MCM_set_PL_updateStatus(mcm, me->plStatus);
-    }
-}
-
-/*****************************************************************************
- * Power-based PID approach
- ****************************************************************************/
-void POWERLIMIT_calculateTorqueCommandPowerPID(PowerLimit *me, MotorController *mcm){
-    extern sbyte4 MCM_getPower(MotorController *mcm);
-    extern sbyte4 MCM_getCommandedTorque(MotorController *mcm);
-    extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
-    extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
-
-    PID_setSaturationPoint(me->pid, 80000);
-    me->plMode = 2; // not strictly needed, but clarifies
-
-    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
-        me->plStatus = TRUE;
-       
-        // Suppose MCM_getPower(mcm) is in W => convert to “PID scale”
-        sbyte4 pidTargetValue = (sbyte4)(me->plTargetPower * 1000); 
-        sbyte4 pidCurrentValue= (sbyte4)(MCM_getPower(mcm) / 10);
-
-        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
-
-        PID_updateSetpoint(me->pid, pidTargetValue);
-        PID_computeOutput(me->pid, pidCurrentValue);
-
-        // Simple ratio to adjust commandedTorque
-        // In practice, you may want a safer formula 
-        // to avoid divide-by-zero if pidCurrentValue=0
-        if(pidCurrentValue == 0) pidCurrentValue = 1;
-
-        sbyte4 newTorque = (sbyte4)(commandedTorque 
-                             + (commandedTorque * PID_getOutput(me->pid) 
-                                 / pidCurrentValue));
-
-        // saturate
-        if(newTorque > 231) newTorque = 231;
-
-        me->plTorqueCommand = newTorque * 10;
-        MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
-        MCM_set_PL_updateStatus(mcm, me->plStatus);
-    }
-    else {
-        me->plStatus = FALSE;
-        MCM_update_PL_setTorqueCommand(mcm, -1);
-        MCM_set_PL_updateStatus(mcm, me->plStatus);
-    }
-}
 
 /*****************************************************************************
  * The array-based LUT retrieval
@@ -313,9 +310,6 @@ ubyte1 POWERLIMIT_getTorqueFromArray(ubyte4 noLoadVoltage, ubyte4 rpm)
     ubyte2 RPM_MIN     = 2000; 
     ubyte2 RPM_MAX     = 6000;
 
-    // Example LUT size
-    const ubyte1 NUM_V = 26;
-    const ubyte1 NUM_S = 26;
 
     // Hard-coded LUT for “80 kW” limiting example
     const ubyte1 POWER_LIM_LUT_80[26][26] = {

@@ -50,22 +50,22 @@ void PowerLimit_calculateCommand(PowerLimit *me, MotorController *mcm);
 /**
  * @brief LUT-based method
  */
-void POWERLIMIT_calculateTorqueCommand(PowerLimit *me, MotorController *mcm);
+void POWERLIMIT_calculateLUTEquation(PowerLimit *me, MotorController *mcm);
 
 /**
  * @brief Tq = kW -> mechanical eqn method
  */
-void POWERLIMIT_calculateTorqueCommandTorqueEquation(PowerLimit *me, MotorController *mcm);
+void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm);
 
 /**
  * @brief Entirely power-based PID
  */
-void POWERLIMIT_calculateTorqueCommandPowerPID(PowerLimit *me, MotorController *mcm);
+void POWERLIMIT_calculatePowerEquation(PowerLimit *me, MotorController *mcm);
 
 /**
  * @brief Retrieve torque from LUT given noLoadVoltage and rpm
  */
-sbyte4 POWERLIMIT_retrieveTorqueFromLUT(PowerLimit* me, sbyte4 noLoadVoltage, sbyte4 rpm);
+sbyte4 POWERLIMIT_retrieveTorqueFromLUT(PowerLimit* me, ubyte4 noLoadVoltage, ubyte4 rpm);
 
 /**
  * @brief The actual lookup in the array
