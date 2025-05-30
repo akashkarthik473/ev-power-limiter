@@ -46,7 +46,7 @@ int main(void)
     printf("Starting closed-loop power limit simulation...\n");
 
     // Loop through time steps
-    for(int i=0; i<100; i++)
+    for(int i=0; i<50; i++)
     {
         // Step 1: Run power limit algorithm (updates commandedTorque)
         PowerLimit_calculateCommand(pl, &mcm);
@@ -76,7 +76,7 @@ int main(void)
         printf("\n");
 
         // Break if power has stabilized near the threshold
-        if (mcm.power <= powerThreshold + 1000 && mcm.power >= powerThreshold - 1000)
+        if (mcm.power <= powerThreshold + 100 && mcm.power >= powerThreshold - 100)
             break;
     }
 
