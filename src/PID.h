@@ -2,6 +2,16 @@
 #define _PID_H
 
 #include <stdlib.h>  // for malloc
+
+/*
+ * PID CONTROLLER UNITS:
+ * - Input/Output: Same units as the controlled variable
+ * - For torque control: deci-Nm (tenths of Newton-meter)
+ * - For power control: Watts (W)
+ * - Gains (Kp, Ki, Kd): Scaled appropriately for the units
+ * - Saturation: Same units as output
+ */
+
 // --------------------------------------------------------------------
 // Define custom data types once here
 // --------------------------------------------------------------------
@@ -25,15 +35,15 @@ typedef struct _PID {
     sbyte1 Ki;               // Integral gain
     sbyte1 Kd;               // Derivative gain
 
-    sbyte4 setpoint;         // Target value
+    sbyte4 setpoint;         // Target value (same units as output)
     sbyte4 previousError;
     sbyte4 totalError;
-    sbyte4 dH;               // “Scaled” delta-time factor for discrete PID
-    sbyte4 output;           // The final PID output
+    sbyte4 dH;               // "Scaled" delta-time factor for discrete PID
+    sbyte4 output;           // The final PID output (same units as setpoint)
     sbyte4 proportional;
     sbyte4 integral;
     sbyte4 derivative;
-    sbyte4 saturationValue;
+    sbyte4 saturationValue;  // Maximum output value (same units as output)
     bool   antiWindupFlag;
 } PID;
 
@@ -42,7 +52,7 @@ typedef struct _PID {
  * @param Kp   Proportional gain   (in deci-units)
  * @param Ki   Integral gain       (in deci-units)
  * @param Kd   Derivative gain     (in deci-units)
- * @param saturationValue  If > 0, maximum allowable setpoint or clamp
+ * @param saturationValue  If > 0, maximum allowable output value
  */
 PID* PID_new(sbyte1 Kp, sbyte1 Ki, sbyte1 Kd, sbyte4 saturationValue);
 

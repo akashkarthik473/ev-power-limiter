@@ -6,15 +6,24 @@
 #include <math.h>
 #include "powerlimit.h"
 
+/*
+ * UNIT SYSTEM:
+ * - Torque: deci-Nm (tenths of Newton-meter, e.g., 2310 = 231.0 Nm)
+ * - Power: Watts (W) for internal calculations
+ * - RPM: revolutions per minute
+ * - Voltage: Volts (V)
+ * - Current: Amperes (A)
+ */
+
 // MotorController struct
 typedef struct _MotorController
 {
-    sbyte4 motorRPM;
-    sbyte4 power;
-    sbyte4 dcVoltage;
-    sbyte4 dcCurrent;
-    sbyte4 commandedTorque;
-    bool   plStatus;
+    sbyte4 motorRPM;        // RPM
+    sbyte4 power;           // W (Watts)
+    sbyte4 dcVoltage;       // V (Volts)
+    sbyte4 dcCurrent;       // A (Amperes)
+    sbyte4 commandedTorque; // deci-Nm (tenths of Newton-meter)
+    bool   plStatus;        // Power limiting status
 } MotorController;
 
 // Stub MCM_ calls
@@ -31,19 +40,22 @@ int main(void)
     // Create MotorController instance
     MotorController mcm;
     mcm.motorRPM = 3000;      // Fixed RPM
-    mcm.power = 65000;        // Start at 50 kW
-    mcm.dcVoltage = 360;      // Placeholder
-    mcm.dcCurrent = 0;        // Placeholder
-    mcm.commandedTorque = 2310; // Deci-Nm (2310 = 231.0 Nm)
+    mcm.power = 65000;        // Start at 65 kW (in W)
+    mcm.dcVoltage = 360;      // V
+    mcm.dcCurrent = 0;        // A
+    mcm.commandedTorque = 3000; // deci-Nm (300.0 Nm, above setpoint)
     mcm.plStatus = 0;
 
     // Create PowerLimit instance
     PowerLimit* pl = POWERLIMIT_new();
     pl->plMode = 1;           // TorqueEquation mode
-    pl->plTargetPower = 80;   // Limit power to 80 kW
+    pl->plTargetPower = 80;   // Limit power to 60 kW (setpoint will be lower)
     sbyte4 powerThreshold = pl->plTargetPower * 1000; // Convert to W
 
     printf("Starting closed-loop power limit simulation...\n");
+    printf("Target Power: %d kW (%d W)\n", pl->plTargetPower, powerThreshold);
+    printf("Initial Torque: %d deci-Nm (%.1f Nm)\n", mcm.commandedTorque, mcm.commandedTorque / 10.0);
+    printf("Motor RPM: %d\n\n", mcm.motorRPM);
 
     // Loop through time steps
     for(int i=0; i<50; i++)
@@ -52,19 +64,18 @@ int main(void)
         PowerLimit_calculateCommand(pl, &mcm);
 
         // Step 2: Compute mechanical power from commandedTorque
-        double torqueNm = mcm.commandedTorque / 10.0;  // Convert from deci-Nm
+        double torqueNm = mcm.commandedTorque / 10.0;  // Convert from deci-Nm to Nm
         double omega = (2.0 * M_PI / 60.0) * mcm.motorRPM; // rad/s
-        double mechPowerW = torqueNm * omega;
+        double mechPowerW = torqueNm * omega; // W
 
         // Step 3: Apply to motor controller (feedback loop)
         mcm.power = (sbyte4) mechPowerW; 
 
         // Print results
-        printf("Iteration %2d | RPM=%4d | Torque=%4d (dN-m) -> %.1f Nm\n",
+        printf("Iteration %2d | RPM=%4d | Torque=%4d deci-Nm (%.1f Nm)\n",
                i, (int)mcm.motorRPM, (int)mcm.commandedTorque, torqueNm);
-        printf("           | Computed Power: %.1f W (%.2f kW)\n",
-               mechPowerW, mechPowerW/1000.0);
-        printf("           | plStatus=%d\n", (int)mcm.plStatus);
+        printf("           | Power: %.1f W (%.2f kW) | plStatus=%d\n",
+               mechPowerW, mechPowerW/1000.0, (int)mcm.plStatus);
 
         // Print PID details
         printf("           | PID Setpoint=%d, Output=%d (P=%d, I=%d, D=%d)\n",

@@ -68,20 +68,29 @@ void PID_computeOutput(PID *pid, sbyte4 sensorValue) {
     // Proportional term
     pid->proportional   = (sbyte4)(pid->Kp * currentError / 10);
 
-    // Integral term
-    sbyte4 newTotalError = pid->totalError + currentError;
-    pid->integral = (sbyte4)((pid->Ki * newTotalError) / pid->dH / 10);
+    // Compute output without updating totalError yet
+    sbyte4 output = pid->proportional + pid->integral + pid->derivative;
 
-    // Derivative term (with low-pass filtering)
-    sbyte4 diff = (sbyte4)(currentError - pid->previousError);
-    double alpha = 0.1;  // Low-pass filter coefficient
-    pid->derivative = (sbyte4)(alpha * (pid->Kd * diff * pid->dH) / 10 + (1 - alpha) * pid->derivative);
+    // Check for saturation
+    bool saturated = FALSE;
+    if (pid->saturationValue > 0) {
+        if (output > pid->saturationValue) {
+            output = pid->saturationValue;
+            saturated = TRUE;
+        } else if (output < -pid->saturationValue) {
+            output = -pid->saturationValue;
+            saturated = TRUE;
+        }
+    }
 
-    pid->previousError = currentError;
-    pid->totalError    = newTotalError;
+    // Only integrate if not saturated, or if error is driving output back
+    if (!saturated || (saturated && ((pid->setpoint - sensorValue) * output < 0))) {
+        pid->totalError += (pid->setpoint - sensorValue);
+    }
 
-    // Start with P
-    pid->output = (pid->proportional + pid->integral + pid->derivative);
+    // Now update integral and output
+    pid->integral = (sbyte4)((pid->Ki * pid->totalError) / pid->dH / 10);
+    pid->output = output;
 
     // Apply saturation and anti-windup
     if (pid->saturationValue > 0) {

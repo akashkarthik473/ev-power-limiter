@@ -1,6 +1,13 @@
 /*****************************************************************************
  * powerLimit.c - Power Limiting using a PID controller & LUT
  * Initial Author(s): Harleen Sandhu / Shaun Gilmore 
+ * 
+ * UNITS:
+ * - Torque: deci-Nm (tenths of Newton-meter, e.g., 2310 = 231.0 Nm)
+ * - Power: Watts (W) for internal calculations, kW for user interface
+ * - RPM: revolutions per minute
+ * - Voltage: Volts (V)
+ * - Current: Amperes (A)
  *****************************************************************************/
 
 #include <stdlib.h> // for malloc
@@ -21,6 +28,15 @@ static inline ubyte4 ubyte4_upperStepInterval(ubyte4 val, ubyte4 step) {
 #define VOLTAGE_STEP     5   
 #define RPM_STEP         160
 
+// Unit conversion constants
+#define KW_TO_W          1000    // Convert kW to W
+#define W_TO_KW          0.001   // Convert W to kW
+#define NM_TO_DECINM     10      // Convert Nm to deci-Nm
+#define DECINM_TO_NM     0.1     // Convert deci-Nm to Nm
+
+// Motor limits
+#define MAX_TORQUE_DECINM 2310   // Maximum torque in deci-Nm (231.0 Nm)
+
 #endif
 
 /*****************************************************************************
@@ -29,8 +45,9 @@ static inline ubyte4 ubyte4_upperStepInterval(ubyte4 val, ubyte4 step) {
 PowerLimit* POWERLIMIT_new(){
     PowerLimit* me = (PowerLimit*)malloc(sizeof(PowerLimit));
 
-    // Create the internal PID with example Kp=40, Ki=20, Kd=0, saturation=231
-    me->pid = PID_new(10, 0, 0, 0);
+    // Create the internal PID with gains optimized for deci-Nm units
+    // Kp=10, Ki=0, Kd=0, saturation=MAX_TORQUE_DECINM
+    me->pid = PID_new(10, 10, 0, MAX_TORQUE_DECINM);
 
     // Default mode
     me->plMode = 1;    
@@ -41,8 +58,8 @@ PowerLimit* POWERLIMIT_new(){
 
     me->plStatus = FALSE;
     me->plTorqueCommand = 0; 
-    me->plTargetPower = 80; // kW
-    me->plInitializationThreshold = me->plTargetPower - 15;
+    me->plTargetPower = 80; // kW (user interface)
+    me->plInitializationThreshold = me->plTargetPower - 15; // kW
 
     // LUT corners
     me->vFloorRFloor     = 0;
@@ -78,7 +95,7 @@ void PowerLimit_calculateCommand(PowerLimit *me, MotorController *mcm)
         POWERLIMIT_calculateLUTEquation(me, mcm);
         break;
     case 4:
-        // “Final” approach? Combination or something custom
+        // "Final" approach? Combination or something custom
         // For example:
         // 1) compute LUT-based TQ
         // 2) run TQ eqn check
@@ -94,6 +111,7 @@ void PowerLimit_calculateCommand(PowerLimit *me, MotorController *mcm)
 
 /*****************************************************************************
  * TQ Equation method
+ * Units: All torque calculations in deci-Nm for consistency
  ****************************************************************************/
 void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm){
     extern sbyte4 MCM_getPower(MotorController *mcm);
@@ -102,23 +120,36 @@ void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm){
     extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
     extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
 
-    PID_setSaturationPoint(me->pid, 8000);  // example bigger clamp
+    // Set PID saturation to motor's maximum torque (in deci-Nm)
+    PID_setSaturationPoint(me->pid, MAX_TORQUE_DECINM);
 
-    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
+    // Convert power from W to kW for threshold comparison
+    sbyte4 currentPowerKW = MCM_getPower(mcm) / KW_TO_W;
+    
+    if(currentPowerKW >= me->plInitializationThreshold){
         me->plStatus = TRUE;
 
         sbyte4 motorRPM = MCM_getMotorRPM(mcm);
         if(motorRPM == 0) motorRPM = 1; // avoid divide by zero
 
-        // TQ eqn => P(kW)*9549 / rpm
-        sbyte4 pidSetpoint = (sbyte4)((sbyte4)me->plTargetPower * 9549 / motorRPM);
+        // TQ eqn => P(kW)*9549 / rpm (result in Nm)
+        // Convert to deci-Nm for PID setpoint
+        sbyte4 torqueLimitNm = (sbyte4)(me->plTargetPower * 9549 / motorRPM);
+        sbyte4 pidSetpoint = torqueLimitNm * NM_TO_DECINM; // Convert to deci-Nm
 
-        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
+        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm); // Already in deci-Nm
 
         PID_updateSetpoint(me->pid, pidSetpoint);
         PID_computeOutput(me->pid, commandedTorque);
 
-        me->plTorqueCommand = (sbyte4)((commandedTorque + PID_getOutput(me->pid)) * 10);
+        // PID output is already in deci-Nm, add to current torque
+        me->plTorqueCommand = commandedTorque + PID_getOutput(me->pid);
+        
+        // Ensure we don't exceed motor limits
+        if(me->plTorqueCommand > MAX_TORQUE_DECINM) {
+            me->plTorqueCommand = MAX_TORQUE_DECINM;
+        }
+        
         MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
         MCM_set_PL_updateStatus(mcm, me->plStatus);
     }
@@ -132,6 +163,7 @@ void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm){
 
 /*****************************************************************************
  * Power-based PID approach
+ * Units: Power in W, torque in deci-Nm
  ****************************************************************************/
 void POWERLIMIT_calculatePowerEquation(PowerLimit *me, MotorController *mcm){
     extern sbyte4 MCM_getPower(MotorController *mcm);
@@ -139,34 +171,39 @@ void POWERLIMIT_calculatePowerEquation(PowerLimit *me, MotorController *mcm){
     extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
     extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
 
-    PID_setSaturationPoint(me->pid, 80000);
+    // Set PID saturation for power control (in W)
+    PID_setSaturationPoint(me->pid, me->plTargetPower * KW_TO_W);
     me->plMode = 2; // not strictly needed, but clarifies
 
-    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
+    // Convert power from W to kW for threshold comparison
+    sbyte4 currentPowerKW = MCM_getPower(mcm) / KW_TO_W;
+    
+    if(currentPowerKW >= me->plInitializationThreshold){
         me->plStatus = TRUE;
        
-        // Suppose MCM_getPower(mcm) is in W => convert to “PID scale”
-        sbyte4 pidTargetValue = (sbyte4)(me->plTargetPower * 1000); 
-        sbyte4 pidCurrentValue= (sbyte4)(MCM_getPower(mcm) / 10);
+        // PID operates on power in W
+        sbyte4 pidTargetValue = me->plTargetPower * KW_TO_W; // Convert kW to W
+        sbyte4 pidCurrentValue = MCM_getPower(mcm); // Already in W
 
-        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
+        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm); // Already in deci-Nm
 
         PID_updateSetpoint(me->pid, pidTargetValue);
         PID_computeOutput(me->pid, pidCurrentValue);
 
-        // Simple ratio to adjust commandedTorque
-        // In practice, you may want a safer formula 
-        // to avoid divide-by-zero if pidCurrentValue=0
+        // Simple ratio to adjust commandedTorque based on power error
+        // Avoid divide-by-zero
         if(pidCurrentValue == 0) pidCurrentValue = 1;
 
-        sbyte4 newTorque = (sbyte4)(commandedTorque 
-                             + (commandedTorque * PID_getOutput(me->pid) 
-                                 / pidCurrentValue));
+        // Calculate torque adjustment based on power error
+        sbyte4 torqueAdjustment = (sbyte4)(commandedTorque * PID_getOutput(me->pid) / pidCurrentValue);
+        sbyte4 newTorque = commandedTorque + torqueAdjustment;
 
-        // saturate
-        if(newTorque > 231) newTorque = 231;
+        // Saturate to motor limits (in deci-Nm)
+        if(newTorque > MAX_TORQUE_DECINM) {
+            newTorque = MAX_TORQUE_DECINM;
+        }
 
-        me->plTorqueCommand = newTorque * 10;
+        me->plTorqueCommand = newTorque;
         MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
         MCM_set_PL_updateStatus(mcm, me->plStatus);
     }
@@ -181,9 +218,9 @@ void POWERLIMIT_calculatePowerEquation(PowerLimit *me, MotorController *mcm){
 /*****************************************************************************
  *  LUT-based approach: (UNFINISHED DO NOT USE)
  *  - once power >= threshold, we do a LUT-based torque limit w/ simple PID
+ *  Units: All torque values in deci-Nm
  ****************************************************************************/
 void POWERLIMIT_calculateLUTEquation(PowerLimit *me, MotorController *mcm){
-    // Suppose MCM_getPower(mcm) returns power in W => convert to kW
     extern sbyte4 MCM_getPower(MotorController *mcm);
     extern sbyte4 MCM_getMotorRPM(MotorController *mcm);
     extern sbyte4 MCM_getDCVoltage(MotorController *mcm);
@@ -192,10 +229,13 @@ void POWERLIMIT_calculateLUTEquation(PowerLimit *me, MotorController *mcm){
     extern void   MCM_update_PL_setTorqueCommand(MotorController *mcm, sbyte4 torque);
     extern void   MCM_set_PL_updateStatus(MotorController *mcm, bool status);
 
-    if( (MCM_getPower(mcm) / 1000) >= me->plInitializationThreshold){
+    // Convert power from W to kW for threshold comparison
+    sbyte4 currentPowerKW = MCM_getPower(mcm) / KW_TO_W;
+    
+    if(currentPowerKW >= me->plInitializationThreshold){
         me->plStatus = TRUE;
 
-        // Gather “sensor” inputs
+        // Gather "sensor" inputs
         sbyte4 motorRPM   = MCM_getMotorRPM(mcm);
         sbyte4 mcmVoltage = MCM_getDCVoltage(mcm);
         sbyte4 mcmCurrent = MCM_getDCCurrent(mcm);
@@ -203,23 +243,30 @@ void POWERLIMIT_calculateLUTEquation(PowerLimit *me, MotorController *mcm){
         // Example: pack IR ~ 0.027 ohms
         sbyte4 noLoadVoltage = (mcmCurrent * 27 / 1000) + mcmVoltage; 
 
-        // Get setpoint from LUT
+        // Get setpoint from LUT (returns torque in deci-Nm)
         sbyte4 pidSetpoint = POWERLIMIT_retrieveTorqueFromLUT(me, noLoadVoltage, motorRPM);
 
         // If LUT yields out-of-range, fallback to TQ eqn
-        if(pidSetpoint < 0 || pidSetpoint > 231){
-            pidSetpoint = (sbyte4)(me->plTargetPower * 9549 / (motorRPM == 0 ? 1 : motorRPM));
+        if(pidSetpoint < 0 || pidSetpoint > MAX_TORQUE_DECINM){
+            sbyte4 torqueLimitNm = (sbyte4)(me->plTargetPower * 9549 / (motorRPM == 0 ? 1 : motorRPM));
+            pidSetpoint = torqueLimitNm * NM_TO_DECINM; // Convert to deci-Nm
         }
 
-        // The currently commanded torque
-        sbyte4 commandedTorque = (sbyte4)MCM_getCommandedTorque(mcm);
+        // The currently commanded torque (already in deci-Nm)
+        sbyte4 commandedTorque = MCM_getCommandedTorque(mcm);
 
         // Update and compute PID
         PID_updateSetpoint(me->pid, pidSetpoint);
         PID_computeOutput(me->pid, commandedTorque);
 
-        // Combine
-        me->plTorqueCommand = (sbyte4)((commandedTorque + PID_getOutput(me->pid)) * 10);
+        // Combine (both values in deci-Nm)
+        me->plTorqueCommand = commandedTorque + PID_getOutput(me->pid);
+        
+        // Ensure we don't exceed motor limits
+        if(me->plTorqueCommand > MAX_TORQUE_DECINM) {
+            me->plTorqueCommand = MAX_TORQUE_DECINM;
+        }
+        
         MCM_update_PL_setTorqueCommand(mcm, me->plTorqueCommand);
         MCM_set_PL_updateStatus(mcm, me->plStatus);
     }
