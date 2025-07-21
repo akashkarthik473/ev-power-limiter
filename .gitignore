@@ -62,3 +62,4 @@ coverage/
 *.gcno
 *.gcda
 *.gcov 
+power_limit_notes.md
