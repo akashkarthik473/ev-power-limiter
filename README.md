@@ -2,6 +2,8 @@
 
 A C-based implementation of a power limiting control system for electric motors, featuring multiple control strategies including PID control, lookup tables, and mechanical equations.
 
+Built as a standalone development and validation platform for the power-limiting logic on Spartan Racing Electric's Formula SAE EV, allowing the control strategy to be tested and tuned off-car before VCU integration.
+
 ## Overview
 
 This project implements a power limiting control system that can maintain motor power within specified limits using different control strategies:
@@ -119,14 +121,6 @@ The test program (`main.c`) simulates motor operation with:
 - Target power limit of 80kW
 - Real-time status reporting
 - PID controller monitoring
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
 
 ## License
 

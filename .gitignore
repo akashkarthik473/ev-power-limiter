@@ -63,3 +63,6 @@ coverage/
 *.gcda
 *.gcov 
 power_limit_notes.md
+
+# Generated simulation output
+sim_output.txt
