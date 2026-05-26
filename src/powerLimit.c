@@ -1,6 +1,6 @@
 /*****************************************************************************
  * powerLimit.c - Power Limiting using a PID controller & LUT
- * Initial Author(s): Harleen Sandhu / Shaun Gilmore 
+ * Initial Author(s): Harleen Sandhu & Akash Karthik
  * 
  * UNITS:
  * - Torque: deci-Nm (tenths of Newton-meter, e.g., 2310 = 231.0 Nm)
@@ -145,7 +145,7 @@ void POWERLIMIT_calculateTorqueEquation(PowerLimit *me, MotorController *mcm){
         // PID output is already in deci-Nm, add to current torque
         me->plTorqueCommand = commandedTorque + PID_getOutput(me->pid);
         
-        // Ensure we don't exceed motor limits
+        // Ensures I don't exceed motor limits
         if(me->plTorqueCommand > MAX_TORQUE_DECINM) {
             me->plTorqueCommand = MAX_TORQUE_DECINM;
         }
